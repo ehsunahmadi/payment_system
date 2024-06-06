@@ -1,6 +1,7 @@
 use axum::{
+    body::Body,
     extract::State,
-    http::StatusCode,
+    http::{header::HeaderMap, StatusCode},
     response::Json,
     routing::{get, post},
     Router,
@@ -11,9 +12,11 @@ use dotenvy::dotenv;
 use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use stripe::Webhook;
 use stripe::{
     CheckoutSession, Client, CreateCheckoutSession, CreateCheckoutSessionLineItems,
     CreateCheckoutSessionLineItemsPriceData, CreateCheckoutSessionPaymentMethodTypes, Currency,
+    EventType,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -27,6 +30,7 @@ pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations/");
 struct AppState {
     pool: deadpool_diesel::sqlite::Pool,
     stripe_client: Arc<Client>,
+    stripe_webhook_secret: String,
 }
 
 #[tokio::main]
@@ -61,18 +65,22 @@ async fn main() {
 
     let stripe_client: Arc<Client> = Arc::new(Client::new(stripe_token));
 
+    let stripe_webhook_secret =
+        env::var("STRIPE_WEBHOOK_SECRET").expect("STRIPE_WEBHOOK_SECRET must be set");
+
     let app_state = AppState {
         pool,
         stripe_client,
+        stripe_webhook_secret,
     };
 
     let app = Router::new()
         .route("/user/list", get(list_users))
         .route("/user/create", post(create_user))
         .route("/payments/initiate", post(initiate_payment))
+        .route("/webhook", post(handle_webhook))
         .with_state(app_state.clone());
 
-    // run it with hyper
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     tracing::debug!("listening on {addr}");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
@@ -149,6 +157,57 @@ async fn initiate_payment(
     Ok(Json(models::InitiatePaymentResult {
         session_id: session.id.to_string(),
     }))
+}
+
+async fn handle_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Json<models::StripeWebhookResult>, (StatusCode, String)> {
+    let bytes = axum::body::to_bytes(body, usize::MAX)
+        .await
+        .map_err(internal_error)?; // (1
+    let body_str = std::str::from_utf8(&bytes).unwrap();
+    let sig_header = headers
+        .get("Stripe-Signature")
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            "Missing Stripe-Signature header".to_string(),
+        ))?
+        .to_str()
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Invalid Stripe-Signature header".to_string(),
+            )
+        })?;
+    let event = Webhook::construct_event(body_str, &sig_header, &state.stripe_webhook_secret)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    match event.type_ {
+        EventType::PaymentIntentSucceeded => {
+            let payment_intent = event.data.object;
+            println!("PaymentIntent was successful: {:?}", payment_intent);
+
+            // Call a method to handle the successful payment intent
+            // handle_payment_intent_succeeded(payment_intent);
+        }
+        EventType::PaymentMethodAttached => {
+            let payment_method = event.data.object;
+            println!(
+                "PaymentMethod was attached to a Customer: {:?}",
+                payment_method
+            );
+
+            // Call a method to handle the successful attachment of a PaymentMethod
+            // handle_payment_method_attached(payment_method);
+        }
+        _ => {
+            println!("Unhandled event type: {}", event.type_);
+        }
+    }
+
+    Ok(Json(models::StripeWebhookResult { received: true }))
 }
 
 /// Utility function for mapping any error into a `500 Internal Server Error`

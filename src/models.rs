@@ -47,3 +47,8 @@ pub struct NewPayment {
 pub struct InitiatePaymentResult {
     pub session_id: String,
 }
+
+#[derive(serde::Serialize)]
+pub struct StripeWebhookResult {
+    pub received: bool,
+}
