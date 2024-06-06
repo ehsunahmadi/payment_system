@@ -3,7 +3,7 @@
 diesel::table! {
     balances (user_id) {
         user_id -> Integer,
-        balance -> Integer,
+        balance -> Text,
     }
 }
 
@@ -11,9 +11,9 @@ diesel::table! {
     payments (id) {
         id -> Integer,
         user_id -> Integer,
-        amount -> Integer,
+        amount -> Text,
         status -> Text,
-        stripe_payment_id -> Text,
+        session_id -> Text,
         created_at -> Text,
     }
 }

@@ -21,7 +21,7 @@ pub struct NewUser {
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 pub struct Balances {
     pub user_id: i32,
-    pub balance: i32,
+    pub balance: String,
 }
 
 #[derive(serde::Serialize, Selectable, Queryable)]
@@ -30,9 +30,9 @@ pub struct Balances {
 pub struct Payment {
     pub id: i32,
     pub user_id: i32,
-    pub amount: i32,
+    pub amount: String,
     pub status: String,
-    pub stripe_payment_id: String,
+    pub session_id: String,
     pub created_at: String,
 }
 
@@ -40,5 +40,10 @@ pub struct Payment {
 #[diesel(table_name = crate::schema::payments)]
 pub struct NewPayment {
     pub user_id: i32,
-    pub amount: i32,
+    pub amount: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct InitiatePaymentResult {
+    pub session_id: String,
 }
