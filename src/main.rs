@@ -23,35 +23,21 @@ use dotenvy::dotenv;
 use std::env;
 use std::net::SocketAddr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
+mod models;
+mod schema;
 // this embeds the migrations into the application binary
 // the migration path is relative to the `CARGO_MANIFEST_DIR`
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations/");
 
-// normally part of your generated schema.rs file
-table! {
-    users (id) {
-        id -> Integer,
-        username -> Text,
-        email -> Text,
-    }
-}
-
-#[derive(serde::Serialize, Selectable, Queryable)]
-struct User {
-    pub id: i32,
-    pub username: String,
-    pub email: String,
-}
-
-#[derive(serde::Deserialize, Insertable)]
-#[diesel(table_name = users)]
-struct NewUser {
-    username: String,
-    email: String,
+#[derive(serde::Serialize, Insertable)]
+#[diesel(table_name = crate::schema::payments)]
+struct NewPayment {
+    user_id: i32,
+    amount: i32,
 }
 
 #[tokio::main]
+
 async fn main() {
     dotenv().ok();
 
@@ -84,6 +70,7 @@ async fn main() {
     let app = Router::new()
         .route("/user/list", get(list_users))
         .route("/user/create", post(create_user))
+        .route("/payments/initiate", post(initiate_payment))
         .with_state(pool);
 
     // run it with hyper
@@ -95,14 +82,14 @@ async fn main() {
 
 async fn create_user(
     State(pool): State<deadpool_diesel::sqlite::Pool>,
-    Json(new_user): Json<NewUser>,
-) -> Result<Json<User>, (StatusCode, String)> {
+    Json(new_user): Json<models::NewUser>,
+) -> Result<Json<models::User>, (StatusCode, String)> {
     let conn = pool.get().await.map_err(internal_error)?;
     let res = conn
         .interact(|conn| {
-            diesel::insert_into(users::table)
+            diesel::insert_into(schema::users::table)
                 .values(new_user)
-                .returning(User::as_returning())
+                .returning(models::User::as_returning())
                 .get_result(conn)
         })
         .await
@@ -113,10 +100,32 @@ async fn create_user(
 
 async fn list_users(
     State(pool): State<deadpool_diesel::sqlite::Pool>,
-) -> Result<Json<Vec<User>>, (StatusCode, String)> {
+) -> Result<Json<Vec<models::User>>, (StatusCode, String)> {
     let conn = pool.get().await.map_err(internal_error)?;
     let res = conn
-        .interact(|conn| users::table.select(User::as_select()).load(conn))
+        .interact(|conn| {
+            schema::users::table
+                .select(models::User::as_select())
+                .load(conn)
+        })
+        .await
+        .map_err(internal_error)?
+        .map_err(internal_error)?;
+    Ok(Json(res))
+}
+
+async fn initiate_payment(
+    State(pool): State<deadpool_diesel::sqlite::Pool>,
+    Json(new_user): Json<models::NewPayment>,
+) -> Result<Json<models::Payment>, (StatusCode, String)> {
+    let conn = pool.get().await.map_err(internal_error)?;
+    let res = conn
+        .interact(|conn| {
+            diesel::insert_into(schema::payments::table)
+                .values(new_user)
+                .returning(models::Payment::as_returning())
+                .get_result(conn)
+        })
         .await
         .map_err(internal_error)?
         .map_err(internal_error)?;
