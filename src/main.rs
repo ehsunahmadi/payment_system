@@ -12,11 +12,10 @@ use dotenvy::dotenv;
 use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use stripe::Webhook;
 use stripe::{
     CheckoutSession, Client, CreateCheckoutSession, CreateCheckoutSessionLineItems,
     CreateCheckoutSessionLineItemsPriceData, CreateCheckoutSessionPaymentMethodTypes, Currency,
-    EventType,
+    EventObject, EventType, Webhook,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -138,6 +137,7 @@ async fn initiate_payment(
                 ..Default::default()
             }]),
             mode: Some(stripe::CheckoutSessionMode::Payment),
+
             ..Default::default()
         },
     )
@@ -185,23 +185,54 @@ async fn handle_webhook(
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
     match event.type_ {
-        EventType::PaymentIntentSucceeded => {
-            let payment_intent = event.data.object;
-            println!("PaymentIntent was successful: {:?}", payment_intent);
+        EventType::CheckoutSessionCompleted => {
+            match event.data.object {
+                EventObject::CheckoutSession(session) => {
+                    let conn = state.pool.get().await.map_err(internal_error)?;
+                    let _res = conn
+                        .interact(|conn| {
+                            let session_id: stripe::CheckoutSessionId = session.id;
+                            let payment = schema::payments::table.filter(
+                                schema::payments::session_id
+                                    .clone()
+                                    .eq(session_id.to_string()),
+                            );
+                            let payment = payment.load::<models::Payment>(conn).unwrap();
+                            let payment = payment.first().unwrap();
+                            diesel::update(
+                                schema::payments::table.filter(
+                                    schema::payments::session_id
+                                        .clone()
+                                        .eq(session_id.to_string()),
+                                ),
+                            )
+                            .set(schema::payments::status.eq("completed"))
+                            .execute(conn)
+                            .unwrap();
+                            let user_id = payment.user_id;
+                            let balance = schema::balances::table
+                                .filter(schema::balances::user_id.clone().eq(user_id));
+                            let balance = balance.load::<models::Balances>(conn).unwrap();
+                            let balance = balance.first().unwrap();
+                            let balance = balance.balance.parse::<i32>().unwrap();
+                            let new_balance = balance + payment.amount.parse::<i32>().unwrap();
+                            diesel::update(
+                                schema::balances::table
+                                    .filter(schema::balances::user_id.clone().eq(user_id)),
+                            )
+                            .set(schema::balances::balance.eq(new_balance.to_string()))
+                        })
+                        .await;
+                }
+                _ => {
+                    println!("Unexpected object type for CheckoutSessionCompleted event");
+                }
+            }
 
             // Call a method to handle the successful payment intent
             // handle_payment_intent_succeeded(payment_intent);
         }
-        EventType::PaymentMethodAttached => {
-            let payment_method = event.data.object;
-            println!(
-                "PaymentMethod was attached to a Customer: {:?}",
-                payment_method
-            );
 
-            // Call a method to handle the successful attachment of a PaymentMethod
-            // handle_payment_method_attached(payment_method);
-        }
         _ => {
             println!("Unhandled event type: {}", event.type_);
         }
