@@ -19,6 +19,7 @@ use stripe::{
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+mod dtos;
 mod models;
 mod schema;
 // this embeds the migrations into the application binary
@@ -122,8 +123,8 @@ async fn list_users(
 
 async fn initiate_payment(
     State(state): State<AppState>,
-    Json(new_payment): Json<models::NewPayment>,
-) -> Result<Json<models::InitiatePaymentResult>, (StatusCode, String)> {
+    Json(payment_request): Json<dtos::CreatePaymentRequest>,
+) -> Result<Json<dtos::InitiatePaymentResult>, (StatusCode, String)> {
     let session = CheckoutSession::create(
         &state.stripe_client,
         CreateCheckoutSession {
@@ -133,7 +134,7 @@ async fn initiate_payment(
                     currency: Currency::USD,
                     ..Default::default()
                 }),
-                price: Some(new_payment.amount.clone()),
+                price: Some(payment_request.amount.clone()),
                 ..Default::default()
             }]),
             mode: Some(stripe::CheckoutSessionMode::Payment),
@@ -143,10 +144,17 @@ async fn initiate_payment(
     )
     .await
     .unwrap();
+
+    let payment = models::NewPayment {
+        session_id: session.id.to_string(),
+        user_id: payment_request.user_id,
+        amount: payment_request.amount.clone(),
+    };
+
     let conn = state.pool.get().await.map_err(internal_error)?;
     conn.interact(|conn| {
         diesel::insert_into(schema::payments::table)
-            .values(new_payment)
+            .values(payment)
             .returning(models::Payment::as_returning())
             .get_result(conn)
     })
@@ -154,7 +162,7 @@ async fn initiate_payment(
     .map_err(internal_error)?
     .map_err(internal_error)?;
 
-    Ok(Json(models::InitiatePaymentResult {
+    Ok(Json(dtos::InitiatePaymentResult {
         session_id: session.id.to_string(),
     }))
 }
@@ -163,7 +171,7 @@ async fn handle_webhook(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: Body,
-) -> Result<Json<models::StripeWebhookResult>, (StatusCode, String)> {
+) -> Result<Json<dtos::StripeWebhookResult>, (StatusCode, String)> {
     let bytes = axum::body::to_bytes(body, usize::MAX)
         .await
         .map_err(internal_error)?; // (1
@@ -245,7 +253,7 @@ async fn handle_webhook(
         }
     }
 
-    Ok(Json(models::StripeWebhookResult { received: true }))
+    Ok(Json(dtos::StripeWebhookResult { received: true }))
 }
 
 /// Utility function for mapping any error into a `500 Internal Server Error`
