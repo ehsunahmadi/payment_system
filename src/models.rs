@@ -7,6 +7,7 @@ pub struct User {
     pub id: i32,
     pub username: String,
     pub email: String,
+    pub balance: String,
 }
 
 #[derive(serde::Deserialize, Insertable)]
@@ -14,14 +15,6 @@ pub struct User {
 pub struct NewUser {
     pub username: String,
     pub email: String,
-}
-
-#[derive(serde::Serialize, Queryable, Selectable)]
-#[diesel(table_name = crate::schema::balances)]
-#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
-pub struct Balances {
-    pub user_id: i32,
-    pub balance: String,
 }
 
 #[derive(serde::Serialize, Selectable, Queryable)]

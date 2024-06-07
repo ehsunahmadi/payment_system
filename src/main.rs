@@ -192,6 +192,8 @@ async fn handle_webhook(
                     let _res = conn
                         .interact(|conn| {
                             let session_id: stripe::CheckoutSessionId = session.id;
+
+                            //fetch associated payment
                             let payment = schema::payments::table.filter(
                                 schema::payments::session_id
                                     .clone()
@@ -199,6 +201,8 @@ async fn handle_webhook(
                             );
                             let payment = payment.load::<models::Payment>(conn).unwrap();
                             let payment = payment.first().unwrap();
+
+                            //update payment status
                             diesel::update(
                                 schema::payments::table.filter(
                                     schema::payments::session_id
@@ -209,18 +213,21 @@ async fn handle_webhook(
                             .set(schema::payments::status.eq("completed"))
                             .execute(conn)
                             .unwrap();
+
+                            //update user balance
                             let user_id = payment.user_id;
-                            let balance = schema::balances::table
-                                .filter(schema::balances::user_id.clone().eq(user_id));
-                            let balance = balance.load::<models::Balances>(conn).unwrap();
-                            let balance = balance.first().unwrap();
-                            let balance = balance.balance.parse::<i32>().unwrap();
+                            let user =
+                                schema::users::table.filter(schema::users::id.clone().eq(user_id));
+                            let user = user.load::<models::User>(conn).unwrap();
+                            let user = user.first().unwrap();
+                            let balance = user.balance.parse::<i32>().unwrap();
                             let new_balance = balance + payment.amount.parse::<i32>().unwrap();
                             diesel::update(
-                                schema::balances::table
-                                    .filter(schema::balances::user_id.clone().eq(user_id)),
+                                schema::users::table.filter(schema::users::id.clone().eq(user_id)),
                             )
-                            .set(schema::balances::balance.eq(new_balance.to_string()))
+                            .set(schema::users::balance.eq(new_balance.to_string()))
+                            .execute(conn)
+                            .unwrap();
                         })
                         .await;
                 }

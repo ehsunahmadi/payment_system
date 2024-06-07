@@ -1,7 +1,9 @@
 CREATE TABLE users (
     id INTEGER NOT NULL PRIMARY KEY,
     username TEXT NOT NULL,
-    email TEXT NOT NULL UNIQUE
+    email TEXT NOT NULL UNIQUE,
+    balance TEXT NOT NULL DEFAULT '0.00'
+
 );
 
 CREATE TABLE payments (
@@ -11,9 +13,4 @@ CREATE TABLE payments (
     status TEXT NOT NULL DEFAULT 'pending',
     session_id TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE balances (
-    user_id INTEGER NOT NULL PRIMARY KEY REFERENCES users(id),
-    balance TEXT NOT NULL DEFAULT '0.00'
 );
